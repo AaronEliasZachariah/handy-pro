@@ -93,8 +93,11 @@ pub async fn retry_history_entry_transcription(
         return Err("Recording contains no speech".to_string());
     }
 
+    // handy-pro: a history retry has no live foreground app, so pass None — the Pro layer
+    // (if enabled) falls back to the default profile.
     let processed =
-        process_transcription_output(&app, &transcription, entry.post_process_requested).await;
+        process_transcription_output(&app, &transcription, entry.post_process_requested, None)
+            .await;
     history_manager
         .update_transcription(
             id,

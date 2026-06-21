@@ -63,7 +63,11 @@ fn build_system_prompt(prompt_template: &str) -> String {
     prompt_template.replace("${output}", "").trim().to_string()
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+async fn post_process_transcription(
+    settings: &AppSettings,
+    transcription: &str,
+    pro_profile: Option<&str>,
+) -> Option<String> {
     let provider = match settings.active_post_process_provider().cloned() {
         Some(provider) => provider,
         None => {
@@ -86,32 +90,49 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         return None;
     }
 
-    let selected_prompt_id = match &settings.post_process_selected_prompt_id {
-        Some(id) => id.clone(),
-        None => {
-            debug!("Post-processing skipped because no prompt is selected");
+    // handy-pro: when the app-aware layer is active, compose the prompt from the resolved
+    // profile (base cleanup + profile instruction + vocabulary) instead of the single global
+    // selected prompt. Otherwise behave exactly like upstream.
+    let pro_active = settings.pro_app_aware_enabled && pro_profile.is_some();
+
+    let system_prompt: String;
+    let legacy_prompt: String;
+    if pro_active {
+        let profile_key = pro_profile.unwrap();
+        system_prompt = crate::pro::build_pro_system_prompt(settings, profile_key);
+        legacy_prompt = format!("{}\n\nTranscript:\n{}", system_prompt, transcription);
+        debug!("Pro post-processing active for profile '{}'", profile_key);
+    } else {
+        let selected_prompt_id = match &settings.post_process_selected_prompt_id {
+            Some(id) => id.clone(),
+            None => {
+                debug!("Post-processing skipped because no prompt is selected");
+                return None;
+            }
+        };
+
+        let prompt = match settings
+            .post_process_prompts
+            .iter()
+            .find(|prompt| prompt.id == selected_prompt_id)
+        {
+            Some(prompt) => prompt.prompt.clone(),
+            None => {
+                debug!(
+                    "Post-processing skipped because prompt '{}' was not found",
+                    selected_prompt_id
+                );
+                return None;
+            }
+        };
+
+        if prompt.trim().is_empty() {
+            debug!("Post-processing skipped because the selected prompt is empty");
             return None;
         }
-    };
 
-    let prompt = match settings
-        .post_process_prompts
-        .iter()
-        .find(|prompt| prompt.id == selected_prompt_id)
-    {
-        Some(prompt) => prompt.prompt.clone(),
-        None => {
-            debug!(
-                "Post-processing skipped because prompt '{}' was not found",
-                selected_prompt_id
-            );
-            return None;
-        }
-    };
-
-    if prompt.trim().is_empty() {
-        debug!("Post-processing skipped because the selected prompt is empty");
-        return None;
+        system_prompt = build_system_prompt(&prompt);
+        legacy_prompt = prompt.replace("${output}", transcription);
     }
 
     debug!(
@@ -130,7 +151,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     // - openrouter: nested reasoning object; exclude:true also keeps reasoning text
     //   out of the response so it can't pollute structured-output JSON parsing
     let (reasoning_effort, reasoning) = match provider.id.as_str() {
-        "custom" => (Some("none".to_string()), None),
+        "custom" | "ollama" => (Some("none".to_string()), None),
         "openrouter" => (
             None,
             Some(crate::llm_client::ReasoningConfig {
@@ -141,10 +162,13 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         _ => (None, None),
     };
 
+    // handy-pro: apply the configured timeout to the whole post-process call so a slow or
+    // hung model never stalls dictation — on timeout the caller pastes the raw transcript.
+    let timeout_ms = settings.pro_timeout_ms;
+
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
-        let system_prompt = build_system_prompt(&prompt);
         let user_content = transcription.to_string();
 
         // Handle Apple Intelligence separately since it uses native Swift APIs
@@ -169,12 +193,11 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                             debug!("Apple Intelligence returned an empty response");
                             None
                         } else {
-                            let result = strip_invisible_chars(&result);
-                            debug!(
-                                "Apple Intelligence post-processing succeeded. Output length: {} chars",
-                                result.len()
-                            );
-                            Some(result)
+                            Some(finalize(
+                                strip_invisible_chars(&result),
+                                settings,
+                                pro_active,
+                            ))
                         }
                     }
                     Err(err) => {
@@ -204,96 +227,216 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
             "additionalProperties": false
         });
 
-        match crate::llm_client::send_chat_completion_with_schema(
+        let call = crate::llm_client::send_chat_completion_with_schema(
             &provider,
             api_key.clone(),
             &model,
             user_content,
-            Some(system_prompt),
+            Some(system_prompt.clone()),
             Some(json_schema),
             reasoning_effort.clone(),
             reasoning.clone(),
-        )
-        .await
-        {
-            Ok(Some(content)) => {
-                // Parse the JSON response to extract the transcription field
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(json) => {
-                        if let Some(transcription_value) =
-                            json.get(TRANSCRIPTION_FIELD).and_then(|t| t.as_str())
-                        {
-                            let result = strip_invisible_chars(transcription_value);
-                            debug!(
-                                "Structured output post-processing succeeded for provider '{}'. Output length: {} chars",
-                                provider.id,
-                                result.len()
-                            );
-                            return Some(result);
-                        } else {
+        );
+
+        match run_with_timeout(call, timeout_ms).await {
+            Ok(Ok(Some(content))) => {
+                let parsed = match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(json) => json
+                        .get(TRANSCRIPTION_FIELD)
+                        .and_then(|t| t.as_str())
+                        .map(strip_invisible_chars)
+                        .unwrap_or_else(|| {
                             error!("Structured output response missing 'transcription' field");
-                            return Some(strip_invisible_chars(&content));
-                        }
-                    }
+                            strip_invisible_chars(&content)
+                        }),
                     Err(e) => {
                         error!(
                             "Failed to parse structured output JSON: {}. Returning raw content.",
                             e
                         );
-                        return Some(strip_invisible_chars(&content));
+                        strip_invisible_chars(&content)
                     }
-                }
+                };
+                return Some(finalize(parsed, settings, pro_active));
             }
-            Ok(None) => {
+            Ok(Ok(None)) => {
                 error!("LLM API response has no content");
                 return None;
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 warn!(
                     "Structured output failed for provider '{}': {}. Falling back to legacy mode.",
                     provider.id, e
                 );
                 // Fall through to legacy mode below
             }
+            Err(_) => {
+                warn!(
+                    "Post-processing timed out after {}ms; using raw transcript",
+                    timeout_ms
+                );
+                return None;
+            }
         }
     }
 
-    // Legacy mode: Replace ${output} variable in the prompt with the actual text
-    let processed_prompt = prompt.replace("${output}", transcription);
-    debug!("Processed prompt length: {} chars", processed_prompt.len());
+    // Legacy mode: single user message containing the instruction + transcript.
+    debug!(
+        "Legacy post-processing, prompt length: {} chars",
+        legacy_prompt.len()
+    );
 
-    match crate::llm_client::send_chat_completion(
+    let call = crate::llm_client::send_chat_completion(
         &provider,
         api_key,
         &model,
-        processed_prompt,
+        legacy_prompt,
         reasoning_effort,
         reasoning,
-    )
-    .await
-    {
-        Ok(Some(content)) => {
-            let content = strip_invisible_chars(&content);
-            debug!(
-                "LLM post-processing succeeded for provider '{}'. Output length: {} chars",
-                provider.id,
-                content.len()
-            );
-            Some(content)
-        }
-        Ok(None) => {
+    );
+
+    match run_with_timeout(call, timeout_ms).await {
+        Ok(Ok(Some(content))) => Some(finalize(
+            strip_invisible_chars(&content),
+            settings,
+            pro_active,
+        )),
+        Ok(Ok(None)) => {
             error!("LLM API response has no content");
             None
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             error!(
                 "LLM post-processing failed for provider '{}': {}. Falling back to original transcription.",
-                provider.id,
-                e
+                provider.id, e
+            );
+            None
+        }
+        Err(_) => {
+            warn!(
+                "Post-processing timed out after {}ms; using raw transcript",
+                timeout_ms
             );
             None
         }
     }
+}
+
+/// handy-pro: await a future with an optional timeout (`0` = no timeout).
+async fn run_with_timeout<F, T>(fut: F, timeout_ms: u64) -> Result<T, tokio::time::error::Elapsed>
+where
+    F: std::future::Future<Output = T>,
+{
+    if timeout_ms == 0 {
+        Ok(fut.await)
+    } else {
+        tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), fut).await
+    }
+}
+
+/// handy-pro: apply the vocabulary fixup when the Pro layer produced the text.
+fn finalize(text: String, settings: &AppSettings, pro_active: bool) -> String {
+    if pro_active {
+        crate::pro::apply_vocabulary(&text, settings)
+    } else {
+        text
+    }
+}
+
+/// handy-pro: run the Pro post-processor for the live-test panel, surfacing real errors so the
+/// user can debug their setup. Uses a generous fixed timeout since the first local model load
+/// can take longer than the dictation-time budget.
+pub(crate) async fn run_pro_post_process(
+    settings: &AppSettings,
+    text: &str,
+    profile_key: &str,
+) -> Result<String, String> {
+    let provider = settings
+        .active_post_process_provider()
+        .cloned()
+        .ok_or_else(|| "No post-processing provider is selected.".to_string())?;
+    let model = settings
+        .post_process_models
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    if model.trim().is_empty() {
+        return Err(format!(
+            "Provider '{}' has no model configured.",
+            provider.label
+        ));
+    }
+    let api_key = settings
+        .post_process_api_keys
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    let system_prompt = crate::pro::build_pro_system_prompt(settings, profile_key);
+    let (reasoning_effort, reasoning) = match provider.id.as_str() {
+        "custom" | "ollama" => (Some("none".to_string()), None),
+        "openrouter" => (
+            None,
+            Some(crate::llm_client::ReasoningConfig {
+                effort: Some("none".to_string()),
+                exclude: Some(true),
+            }),
+        ),
+        _ => (None, None),
+    };
+    let timeout_ms = 30_000;
+
+    let result = if provider.supports_structured_output {
+        let json_schema = serde_json::json!({
+            "type": "object",
+            "properties": { (TRANSCRIPTION_FIELD): { "type": "string" } },
+            "required": [TRANSCRIPTION_FIELD],
+            "additionalProperties": false
+        });
+        let call = crate::llm_client::send_chat_completion_with_schema(
+            &provider,
+            api_key,
+            &model,
+            text.to_string(),
+            Some(system_prompt),
+            Some(json_schema),
+            reasoning_effort,
+            reasoning,
+        );
+        match run_with_timeout(call, timeout_ms).await {
+            Ok(Ok(Some(content))) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(json) => json
+                    .get(TRANSCRIPTION_FIELD)
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or(content),
+                Err(_) => content,
+            },
+            Ok(Ok(None)) => return Err("The model returned an empty response.".to_string()),
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(format!("Timed out after {}ms.", timeout_ms)),
+        }
+    } else {
+        let prompt = format!("{}\n\nTranscript:\n{}", system_prompt, text);
+        let call = crate::llm_client::send_chat_completion(
+            &provider,
+            api_key,
+            &model,
+            prompt,
+            reasoning_effort,
+            reasoning,
+        );
+        match run_with_timeout(call, timeout_ms).await {
+            Ok(Ok(Some(content))) => content,
+            Ok(Ok(None)) => return Err("The model returned an empty response.".to_string()),
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(format!("Timed out after {}ms.", timeout_ms)),
+        }
+    };
+
+    Ok(crate::pro::apply_vocabulary(
+        &strip_invisible_chars(&result),
+        settings,
+    ))
 }
 
 async fn maybe_convert_chinese_variant(
@@ -350,6 +493,7 @@ pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
     post_process: bool,
+    app_context: Option<crate::app_context::AppContext>,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
     let mut final_text = transcription.to_string();
@@ -361,11 +505,32 @@ pub(crate) async fn process_transcription_output(
     }
 
     if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
+        // handy-pro: resolve the app-aware profile (if the Pro layer is on) and record what was
+        // detected so the settings/live-test panel can show it without re-dictating.
+        let pro_profile = if settings.pro_app_aware_enabled {
+            let key = crate::pro::resolve_profile_key(&settings, app_context.as_ref());
+            let ctx = app_context.clone().unwrap_or_default();
+            crate::app_context::set_last_detected(crate::app_context::DetectedContext {
+                process_name: ctx.process_name,
+                window_title: ctx.window_title,
+                profile_key: key.clone(),
+            });
+            Some(key)
+        } else {
+            None
+        };
+
+        if let Some(processed_text) =
+            post_process_transcription(&settings, &final_text, pro_profile.as_deref()).await
+        {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
 
-            if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
+            // Record the prompt used (for history). Pro mode uses the composed profile prompt.
+            if let Some(profile_key) = &pro_profile {
+                post_process_prompt =
+                    Some(crate::pro::build_pro_system_prompt(&settings, profile_key));
+            } else if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
                 if let Some(prompt) = settings
                     .post_process_prompts
                     .iter()
@@ -513,6 +678,14 @@ impl ShortcutAction for TranscribeAction {
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
 
+        // handy-pro: capture the foreground app now, while the user's target window still has
+        // focus (the recording overlay is non-activating, so this reflects the real target app).
+        let app_context = if post_process {
+            crate::app_context::foreground_app()
+        } else {
+            None
+        };
+
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
             debug!(
@@ -582,9 +755,13 @@ impl ShortcutAction for TranscribeAction {
                             if post_process {
                                 show_processing_overlay(&ah);
                             }
-                            let processed =
-                                process_transcription_output(&ah, &transcription, post_process)
-                                    .await;
+                            let processed = process_transcription_output(
+                                &ah,
+                                &transcription,
+                                post_process,
+                                app_context.clone(),
+                            )
+                            .await;
 
                             // Save to history if WAV was saved
                             if wav_saved {

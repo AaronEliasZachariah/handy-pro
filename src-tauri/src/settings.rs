@@ -106,6 +106,52 @@ pub struct PostProcessProvider {
     pub supports_structured_output: bool,
 }
 
+/// handy-pro: a per-app post-processing profile. The `prompt` is a context-specific
+/// instruction appended to the shared base cleanup instruction (see `pro.rs`).
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct ProProfile {
+    pub key: String,
+    pub label: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub prompt: String,
+}
+
+/// handy-pro: whether an app rule matches against the process name or the window title.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ProMatchType {
+    Process,
+    Title,
+}
+
+impl Default for ProMatchType {
+    fn default() -> Self {
+        ProMatchType::Process
+    }
+}
+
+/// handy-pro: an ordered rule mapping a foreground app (by process/title substring,
+/// case-insensitive) to a profile. First enabled match wins.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct ProAppRule {
+    pub id: String,
+    #[serde(default)]
+    pub match_type: ProMatchType,
+    pub pattern: String,
+    pub profile_key: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// handy-pro: a domain-vocabulary fixup. `from` is the term the STT tends to mangle;
+/// `to` is the exact spelling to use. Hinted to the model and applied as a safe fixup.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct ProVocabEntry {
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum OverlayPosition {
@@ -401,6 +447,19 @@ pub struct AppSettings {
     pub post_process_prompts: Vec<LLMPrompt>,
     #[serde(default)]
     pub post_process_selected_prompt_id: Option<String>,
+    // handy-pro: app-aware "Pro" post-processing layer (all additive, off by default).
+    #[serde(default)]
+    pub pro_app_aware_enabled: bool,
+    #[serde(default = "default_pro_profiles")]
+    pub pro_profiles: Vec<ProProfile>,
+    #[serde(default = "default_pro_app_rules")]
+    pub pro_app_rules: Vec<ProAppRule>,
+    #[serde(default = "default_pro_default_profile")]
+    pub pro_default_profile: String,
+    #[serde(default = "default_pro_vocabulary")]
+    pub pro_vocabulary: Vec<ProVocabEntry>,
+    #[serde(default = "default_pro_timeout_ms")]
+    pub pro_timeout_ms: u64,
     #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]
@@ -518,7 +577,150 @@ fn default_show_tray_icon() -> bool {
 }
 
 fn default_post_process_provider_id() -> String {
-    "openai".to_string()
+    // handy-pro: default to the free, local Ollama provider. Existing installs keep
+    // whatever provider they already had persisted; only fresh stores get this.
+    "ollama".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_pro_default_profile() -> String {
+    "generic".to_string()
+}
+
+fn default_pro_timeout_ms() -> u64 {
+    4000
+}
+
+fn default_pro_profiles() -> Vec<ProProfile> {
+    let p = |key: &str, label: &str, prompt: &str| ProProfile {
+        key: key.to_string(),
+        label: label.to_string(),
+        enabled: true,
+        prompt: prompt.to_string(),
+    };
+    vec![
+        p(
+            "code",
+            "Code / Terminal",
+            "This text was dictated into a coding or terminal context. Fix mis-transcribed \
+             technical terms, identifiers, library and product names, file paths, and commands. \
+             Render code, commands, symbols and operators correctly (e.g. \"dot\" -> \".\", \
+             \"slash\" -> \"/\", \"dash\" -> \"-\", \"underscore\" -> \"_\", \"open paren\" -> \"(\"). \
+             Do NOT wrap code or commands into prose and do NOT add explanations.",
+        ),
+        p(
+            "email",
+            "Email",
+            "Format this as an email when it was dictated as one: an appropriate greeting, \
+             well-structured body paragraphs, and a sign-off. Keep a professional tone unless the \
+             content is clearly casual. Do not invent recipients or facts.",
+        ),
+        p(
+            "chat",
+            "Chat / Message",
+            "Format this as a concise, casual chat message with correct punctuation and \
+             capitalization. Keep it short and natural — no greeting, no signature.",
+        ),
+        p(
+            "note",
+            "Notes / Document",
+            "Format this as a clear note or document: complete sentences, sensible paragraphs, and \
+             correct punctuation. Add light structure (headings or lists) only if the dictation \
+             clearly implies it.",
+        ),
+        p(
+            "list",
+            "List",
+            "When the speaker enumerates items, format them as a clean bullet or numbered list. \
+             Otherwise keep the text as tidy prose.",
+        ),
+        p(
+            "browser",
+            "Browser",
+            "This was dictated into a web browser field (a search box, form, or text area). Produce \
+             clean, well-punctuated prose suitable for typing into that field.",
+        ),
+        p(
+            "generic",
+            "Generic",
+            "Produce clean, well-punctuated prose that preserves the speaker's meaning and intent.",
+        ),
+    ]
+}
+
+fn default_pro_app_rules() -> Vec<ProAppRule> {
+    let mut id = 0u32;
+    let mut rule = |match_type: ProMatchType, pattern: &str, profile_key: &str| {
+        id += 1;
+        ProAppRule {
+            id: format!("seed-{}", id),
+            match_type,
+            pattern: pattern.to_string(),
+            profile_key: profile_key.to_string(),
+            enabled: true,
+        }
+    };
+    use ProMatchType::{Process, Title};
+    vec![
+        // Title rules first so webmail in a browser still routes to email.
+        rule(Title, "gmail", "email"),
+        rule(Title, "outlook", "email"),
+        rule(Title, "proton mail", "email"),
+        // Editors / IDEs / terminals -> code
+        rule(Process, "code", "code"), // VS Code (Code.exe), VSCodium
+        rule(Process, "cursor", "code"),
+        rule(Process, "devenv", "code"), // Visual Studio
+        rule(Process, "idea64", "code"), // IntelliJ
+        rule(Process, "pycharm64", "code"),
+        rule(Process, "webstorm64", "code"),
+        rule(Process, "rider64", "code"),
+        rule(Process, "clion64", "code"),
+        rule(Process, "goland64", "code"),
+        rule(Process, "sublime_text", "code"),
+        rule(Process, "windowsterminal", "code"),
+        rule(Process, "powershell", "code"),
+        rule(Process, "pwsh", "code"),
+        rule(Process, "cmd", "code"),
+        rule(Process, "alacritty", "code"),
+        rule(Process, "wezterm", "code"),
+        // Mail clients -> email
+        rule(Process, "outlook", "email"),
+        rule(Process, "thunderbird", "email"),
+        // Chat apps -> chat
+        rule(Process, "slack", "chat"),
+        rule(Process, "discord", "chat"),
+        rule(Process, "teams", "chat"),
+        rule(Process, "whatsapp", "chat"),
+        rule(Process, "telegram", "chat"),
+        // Notes / docs -> note
+        rule(Process, "notion", "note"),
+        rule(Process, "obsidian", "note"),
+        rule(Process, "winword", "note"),
+        rule(Process, "notepad", "note"),
+        // Browsers -> browser (after the title rules above)
+        rule(Process, "chrome", "browser"),
+        rule(Process, "msedge", "browser"),
+        rule(Process, "firefox", "browser"),
+        rule(Process, "brave", "browser"),
+        rule(Process, "arc", "browser"),
+        rule(Process, "opera", "browser"),
+    ]
+}
+
+fn default_pro_vocabulary() -> Vec<ProVocabEntry> {
+    let v = |from: &str, to: &str| ProVocabEntry {
+        from: from.to_string(),
+        to: to.to_string(),
+    };
+    vec![
+        v("parakeet", "Parakeet"),
+        v("claude code", "Claude Code"),
+        v("handy pro", "handy-pro"),
+        v("tow re", "Tauri"),
+    ]
 }
 
 fn default_post_process_providers() -> Vec<PostProcessProvider> {
@@ -599,6 +801,18 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
         supports_structured_output: true,
     });
 
+    // handy-pro: Ollama as a first-class local provider (free + private default).
+    // Reachable via Ollama's OpenAI-compatible endpoint at /v1. base_url is editable
+    // in case the user runs Ollama on another host/port.
+    providers.push(PostProcessProvider {
+        id: "ollama".to_string(),
+        label: "Ollama (local)".to_string(),
+        base_url: "http://localhost:11434/v1".to_string(),
+        allow_base_url_edit: true,
+        models_endpoint: Some("/models".to_string()),
+        supports_structured_output: false,
+    });
+
     // Custom provider always comes last
     providers.push(PostProcessProvider {
         id: "custom".to_string(),
@@ -623,6 +837,11 @@ fn default_post_process_api_keys() -> SecretMap {
 fn default_model_for_provider(provider_id: &str) -> String {
     if provider_id == APPLE_INTELLIGENCE_PROVIDER_ID {
         return APPLE_INTELLIGENCE_DEFAULT_MODEL_ID.to_string();
+    }
+    // handy-pro: pre-fill a small, fast local model for Ollama so the free/local
+    // default works out of the box once the user runs `ollama pull llama3.2:3b`.
+    if provider_id == "ollama" {
+        return "llama3.2:3b".to_string();
     }
     String::new()
 }
@@ -799,6 +1018,12 @@ pub fn get_default_settings() -> AppSettings {
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
+        pro_app_aware_enabled: false,
+        pro_profiles: default_pro_profiles(),
+        pro_app_rules: default_pro_app_rules(),
+        pro_default_profile: default_pro_default_profile(),
+        pro_vocabulary: default_pro_vocabulary(),
+        pro_timeout_ms: default_pro_timeout_ms(),
         mute_while_recording: false,
         append_trailing_space: false,
         app_language: default_app_language(),

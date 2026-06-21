@@ -1,4 +1,5 @@
 mod actions;
+mod app_context;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
 mod audio_feedback;
@@ -12,6 +13,7 @@ mod llm_client;
 mod managers;
 mod overlay;
 pub mod portable;
+mod pro;
 mod settings;
 mod shortcut;
 mod signal_handle;
@@ -387,6 +389,15 @@ pub fn run(cli_args: CliArgs) {
             commands::open_log_dir,
             commands::open_app_data_dir,
             commands::check_apple_intelligence_available,
+            commands::pro::set_pro_app_aware_enabled,
+            commands::pro::set_pro_profiles,
+            commands::pro::set_pro_app_rules,
+            commands::pro::set_pro_default_profile,
+            commands::pro::set_pro_vocabulary,
+            commands::pro::set_pro_timeout_ms,
+            commands::pro::get_last_app_context,
+            commands::pro::get_foreground_app_context,
+            commands::pro::pro_test_post_process,
             commands::initialize_enigo,
             commands::initialize_shortcuts,
             commands::models::get_available_models,
