@@ -26,36 +26,61 @@ What it adds:
   (process / window-title patterns).
 - **Per-profile prompts** (code, email, chat, notes, list, browser, generic) layered on a shared
   cleanup instruction (remove fillers, false starts, spoken repetitions; fix dictation errors).
-- **Ollama by default** (free + private, runs locally) with optional cloud providers
+- **Local models** via **Ollama** or **LM Studio** (free + private), with optional cloud providers
   (OpenAI / Anthropic / OpenRouter / Groq / …) reusing Handy's existing provider settings.
 - A **vocabulary** map for terms the speech model mangles (seeded with `Parakeet`, `Claude Code`, …).
 - A **latency timeout** (default 4 s) with raw-transcript fallback.
 - A **live test panel** — paste raw dictation, pick a profile, see the cleaned result without dictating.
 
-### Setup (free + local, recommended)
+### Turning it on
 
-1. **Install [Ollama](https://ollama.com/download)** and pull a small instruct model:
+Post-processing speaks the **OpenAI chat API**, so any backend exposing an OpenAI-compatible
+`/v1/chat/completions` endpoint works — a local one (Ollama or LM Studio) or a cloud one. A
+"provider" is just a **base URL + model + (optional) API key**.
+
+1. Open the **Post Process** tab in the sidebar (always available) and turn **Post Processing** on.
+2. Pick a **Provider** and **Model** (local options below). Optionally turn on **App-aware cleanup**
+   and tune profiles / rules / vocabulary in the **Live test** panel (paste text → see the result,
+   no dictating needed).
+3. Dictate with your normal **Transcribe shortcut** (set in **General**). While Post Processing is
+   on, that same shortcut cleans/formats the text; turn it off for the raw transcript. **There is no
+   separate post-processing hotkey.**
+
+### Local model — Ollama
+
+1. Install [Ollama](https://ollama.com/download) and pull a small instruct model:
 
    ```bash
    ollama pull llama3.2:3b
    ```
 
-   Ollama serves an OpenAI-compatible API at `http://localhost:11434/v1`, which handy-pro uses by
-   default. A larger model (e.g. `qwen2.5:7b-instruct`) follows the formatting instructions more
-   faithfully if you have the headroom — set it under Post-processing → provider model.
+   Ollama serves an OpenAI-compatible API at `http://localhost:11434/v1`.
+2. In **Post Process → Provider**, choose **Ollama (local)**. The model defaults to `llama3.2:3b`
+   (use the ↻ refresh to list what you've pulled). A larger model (e.g. `qwen2.5:7b-instruct`)
+   follows the formatting instructions more faithfully if you have the headroom.
 
-2. In Handy: **Advanced → enable Post-processing**, then open the **Post Process** tab and turn on
-   **App-aware cleanup**. Use the **Live test** panel to tune profiles/rules/vocabulary, then dictate
-   with the post-processing shortcut (default `Ctrl+Shift+Space`).
+### Local model — LM Studio
 
-### Setup (cloud provider, optional)
+1. Install [LM Studio](https://lmstudio.ai), then download and load a small instruct/transcriber
+   model (e.g. a Qwen 0.6–7B).
+2. Start its server: the **Developer** tab (`</>` icon in the left rail) → flip **Status** to
+   **Running** (default port `1234`). That serves an OpenAI-compatible API at
+   `http://localhost:1234/v1`.
+   - Tip: in **Settings → Developer**, enable **"Enable Local LLM Service"** so the server keeps
+     running even when LM Studio's window is closed.
+3. In **Post Process → Provider**, choose **LM Studio (local)**, then set **Model** to the model's
+   **API identifier** (shown in LM Studio's Developer tab; use ↻ to list loaded models, or type it).
+   No API key is needed. Tiny models (~0.6B transcriber fine-tunes) are very fast (~0.5 s) but format
+   less aggressively per-app than a larger instruct model.
 
-In the **Post Process** tab pick a provider (OpenAI, Anthropic, OpenRouter, Groq, …), paste your API
-key, and choose a model. Everything else (profiles, rules, vocabulary, live test) works the same.
+### Cloud provider (optional)
+
+In **Post Process → Provider** pick a provider (OpenAI, Anthropic, OpenRouter, Groq, …), paste your
+API key, and choose a model. Everything else (profiles, rules, vocabulary, live test) works the same.
 
 > Building this fork from source on Windows uses CPU whisper by default so it builds without the
-> Vulkan SDK — see [DECISIONS.md](DECISIONS.md) (decision **D**, build notes) to restore GPU whisper.
-> The post-processing feature is independent of the transcription backend.
+> Vulkan SDK — see [DECISIONS.md](DECISIONS.md) build notes to restore GPU whisper. The
+> post-processing feature is independent of the transcription backend.
 
 See **[DECISIONS.md](DECISIONS.md)** for the full integration plan and design decisions.
 
