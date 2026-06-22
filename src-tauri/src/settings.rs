@@ -813,6 +813,18 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
         supports_structured_output: false,
     });
 
+    // handy-pro: LM Studio as a first-class local provider. LM Studio's "Local Server"
+    // (Developer tab) exposes an OpenAI-compatible API, default at localhost:1234/v1.
+    // base_url is editable in case the user changes the port.
+    providers.push(PostProcessProvider {
+        id: "lmstudio".to_string(),
+        label: "LM Studio (local)".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
+        allow_base_url_edit: true,
+        models_endpoint: Some("/models".to_string()),
+        supports_structured_output: false,
+    });
+
     // Custom provider always comes last
     providers.push(PostProcessProvider {
         id: "custom".to_string(),
