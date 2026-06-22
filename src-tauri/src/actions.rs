@@ -280,17 +280,24 @@ async fn post_process_transcription(
         }
     }
 
-    // Legacy mode: single user message containing the instruction + transcript.
-    debug!(
-        "Legacy post-processing, prompt length: {} chars",
-        legacy_prompt.len()
-    );
+    // Non-structured mode. For the Pro path, send the composed instruction as a SYSTEM message
+    // and the transcript as the USER message — small local models (e.g. transcriber fine-tunes)
+    // echo the instructions back if everything is crammed into one user turn. Upstream keeps its
+    // single-user-message behavior (system = None) so its prompt templates are unaffected.
+    let (user_content, system_msg) = if pro_active {
+        (transcription.to_string(), Some(system_prompt.clone()))
+    } else {
+        (legacy_prompt, None)
+    };
+    debug!("Non-structured post-processing (pro={})", pro_active);
 
-    let call = crate::llm_client::send_chat_completion(
+    let call = crate::llm_client::send_chat_completion_with_schema(
         &provider,
         api_key,
         &model,
-        legacy_prompt,
+        user_content,
+        system_msg,
+        None,
         reasoning_effort,
         reasoning,
     );
@@ -416,12 +423,15 @@ pub(crate) async fn run_pro_post_process(
             Err(_) => return Err(format!("Timed out after {}ms.", timeout_ms)),
         }
     } else {
-        let prompt = format!("{}\n\nTranscript:\n{}", system_prompt, text);
-        let call = crate::llm_client::send_chat_completion(
+        // System message + user message (not one crammed user turn) so small local models
+        // follow the instruction instead of echoing it.
+        let call = crate::llm_client::send_chat_completion_with_schema(
             &provider,
             api_key,
             &model,
-            prompt,
+            text.to_string(),
+            Some(system_prompt),
+            None,
             reasoning_effort,
             reasoning,
         );
