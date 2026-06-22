@@ -1029,7 +1029,9 @@ pub fn get_default_settings() -> AppSettings {
         post_process_api_keys: default_post_process_api_keys(),
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
-        post_process_selected_prompt_id: None,
+        // handy-pro: pre-select the built-in cleanup prompt so enabling post-processing does
+        // something out of the box (the app-aware path uses profiles and ignores this).
+        post_process_selected_prompt_id: Some("default_improve_transcriptions".to_string()),
         pro_app_aware_enabled: false,
         pro_profiles: default_pro_profiles(),
         pro_app_rules: default_pro_app_rules(),

@@ -360,6 +360,10 @@
     },
     "postProcessing": {
       "title": "Post Process",
+      "warn": {
+        "noModel": "Post-processing is on, but no model is set for the selected provider. Pick or refresh a model below so it can run.",
+        "noPrompt": "Post-processing is on, but it won't run yet. Turn on App-aware cleanup, or select a prompt below."
+      },
       "pro": {
         "title": "App-aware cleanup (Pro)",
         "description": "Detect the app you're dictating into and format the text to fit it — code in your editor, a proper email in Outlook, a quick line in Slack.",

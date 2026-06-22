@@ -798,6 +798,15 @@ pub fn change_auto_submit_key_setting(app: AppHandle, key: String) -> Result<(),
 pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.post_process_enabled = enabled;
+
+    // handy-pro: when turning post-processing on, make sure a prompt is selected so it actually
+    // does something out of the box. (The app-aware path uses profiles instead and ignores this.)
+    if enabled && settings.post_process_selected_prompt_id.is_none() {
+        if let Some(first) = settings.post_process_prompts.first() {
+            settings.post_process_selected_prompt_id = Some(first.id.clone());
+        }
+    }
+
     settings::write_settings(&app, settings);
 
     // handy-pro: there is no separate post-processing shortcut to register/unregister — the

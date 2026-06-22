@@ -439,6 +439,14 @@ export const PostProcessingSettings: React.FC = () => {
   const enabled = getSetting("post_process_enabled") ?? false;
   const proEnabled = getSetting("pro_app_aware_enabled") ?? false;
 
+  // handy-pro: warn when post-processing is on but won't actually run yet — either no model is
+  // set for the active provider, or there's nothing to run (app-aware off and no prompt selected).
+  const providerId = getSetting("post_process_provider_id") || "";
+  const models = getSetting("post_process_models") || {};
+  const modelSet = (models[providerId] ?? "").trim().length > 0;
+  const promptSelected = !!getSetting("post_process_selected_prompt_id");
+  const willRun = modelSet && (proEnabled || promptSelected);
+
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
       {/* Enable/disable is the first thing in the panel. When on, the normal Transcribe
@@ -446,6 +454,14 @@ export const PostProcessingSettings: React.FC = () => {
       <SettingsGroup>
         <PostProcessingToggle descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
+
+      {enabled && !willRun && (
+        <Alert variant="warning">
+          {!modelSet
+            ? t("settings.postProcessing.warn.noModel")
+            : t("settings.postProcessing.warn.noPrompt")}
+        </Alert>
+      )}
 
       {!enabled ? null : (
         <>
