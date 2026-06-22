@@ -798,20 +798,11 @@ pub fn change_auto_submit_key_setting(app: AppHandle, key: String) -> Result<(),
 pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.post_process_enabled = enabled;
-    settings::write_settings(&app, settings.clone());
+    settings::write_settings(&app, settings);
 
-    // Register or unregister the post-processing shortcut
-    if let Some(binding) = settings
-        .bindings
-        .get("transcribe_with_post_process")
-        .cloned()
-    {
-        if enabled {
-            let _ = register_shortcut(&app, binding);
-        } else {
-            let _ = unregister_shortcut(&app, binding);
-        }
-    }
+    // handy-pro: there is no separate post-processing shortcut to register/unregister — the
+    // normal Transcribe shortcut post-processes when this toggle is on (decided at dictation
+    // time in actions.rs). Toggling takes effect on the next dictation; no re-registration.
 
     Ok(())
 }
