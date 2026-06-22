@@ -343,11 +343,14 @@ where
 
 /// handy-pro: apply the vocabulary fixup when the Pro layer produced the text.
 fn finalize(text: String, settings: &AppSettings, pro_active: bool) -> String {
-    if pro_active {
+    let text = if pro_active {
         crate::pro::apply_vocabulary(&text, settings)
     } else {
         text
-    }
+    };
+    // Trim surrounding whitespace — small post-processing models often begin their reply with a
+    // blank line, which would otherwise be pasted as stray newlines before the text.
+    text.trim().to_string()
 }
 
 /// handy-pro: run the Pro post-processor for the live-test panel, surfacing real errors so the
@@ -443,10 +446,11 @@ pub(crate) async fn run_pro_post_process(
         }
     };
 
-    Ok(crate::pro::apply_vocabulary(
-        &strip_invisible_chars(&result),
-        settings,
-    ))
+    Ok(
+        crate::pro::apply_vocabulary(&strip_invisible_chars(&result), settings)
+            .trim()
+            .to_string(),
+    )
 }
 
 async fn maybe_convert_chinese_variant(
