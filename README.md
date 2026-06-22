@@ -73,6 +73,12 @@ Post-processing speaks the **OpenAI chat API**, so any backend exposing an OpenA
    No API key is needed. Tiny models (~0.6B transcriber fine-tunes) are very fast (~0.5 s) but format
    less aggressively per-app than a larger instruct model.
 
+> **Using a transcriber-style model?** Models fine-tuned to clean raw transcripts (rather than to
+> follow instructions) will echo any prompt you send them. For those, pick **No prompt (for
+> transcriber models)** in **Post Process → Prompt** — it hands the model only the transcript, with
+> no system instruction, so it does its cleanup without parroting the prompt back. Use a normal
+> prompt (or the app-aware profiles) only with general instruct models.
+
 ### Cloud provider (optional)
 
 In **Post Process → Provider** pick a provider (OpenAI, Anthropic, OpenRouter, Groq, …), paste your

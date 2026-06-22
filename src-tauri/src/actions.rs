@@ -96,11 +96,13 @@ async fn post_process_transcription(
     let pro_active = settings.pro_app_aware_enabled && pro_profile.is_some();
 
     let system_prompt: String;
-    let legacy_prompt: String;
+    // handy-pro: blank_mode means "send only the transcript, no system prompt" — for transcriber
+    // models that are trained to clean raw ASR text and would otherwise echo any instruction.
+    let blank_mode: bool;
     if pro_active {
         let profile_key = pro_profile.unwrap();
         system_prompt = crate::pro::build_pro_system_prompt(settings, profile_key);
-        legacy_prompt = format!("{}\n\nTranscript:\n{}", system_prompt, transcription);
+        blank_mode = false;
         debug!("Pro post-processing active for profile '{}'", profile_key);
     } else {
         let selected_prompt_id = match &settings.post_process_selected_prompt_id {
@@ -127,12 +129,13 @@ async fn post_process_transcription(
         };
 
         if prompt.trim().is_empty() {
-            debug!("Post-processing skipped because the selected prompt is empty");
-            return None;
+            // Empty prompt = blank mode: hand the transcript to the model with no instruction.
+            system_prompt = String::new();
+            blank_mode = true;
+        } else {
+            system_prompt = build_system_prompt(&prompt);
+            blank_mode = false;
         }
-
-        system_prompt = build_system_prompt(&prompt);
-        legacy_prompt = prompt.replace("${output}", transcription);
     }
 
     debug!(
@@ -232,7 +235,11 @@ async fn post_process_transcription(
             api_key.clone(),
             &model,
             user_content,
-            Some(system_prompt.clone()),
+            if blank_mode {
+                None
+            } else {
+                Some(system_prompt.clone())
+            },
             Some(json_schema),
             reasoning_effort.clone(),
             reasoning.clone(),
@@ -280,16 +287,19 @@ async fn post_process_transcription(
         }
     }
 
-    // Non-structured mode. For the Pro path, send the composed instruction as a SYSTEM message
-    // and the transcript as the USER message — small local models (e.g. transcriber fine-tunes)
-    // echo the instructions back if everything is crammed into one user turn. Upstream keeps its
-    // single-user-message behavior (system = None) so its prompt templates are unaffected.
-    let (user_content, system_msg) = if pro_active {
-        (transcription.to_string(), Some(system_prompt.clone()))
+    // Non-structured mode. Send the instruction as a SYSTEM message and the transcript as the USER
+    // message (never one crammed user turn) — small local models, especially transcriber fine-tunes,
+    // echo the instructions back otherwise. In blank mode there is no system prompt at all: the raw
+    // transcript goes straight to the model, which is what instruction-free transcriber models want.
+    let (user_content, system_msg) = if blank_mode {
+        (transcription.to_string(), None)
     } else {
-        (legacy_prompt, None)
+        (transcription.to_string(), Some(system_prompt.clone()))
     };
-    debug!("Non-structured post-processing (pro={})", pro_active);
+    debug!(
+        "Non-structured post-processing (blank={}, pro={})",
+        blank_mode, pro_active
+    );
 
     let call = crate::llm_client::send_chat_completion_with_schema(
         &provider,

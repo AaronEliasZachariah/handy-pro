@@ -870,11 +870,27 @@ fn default_post_process_models() -> HashMap<String, String> {
 }
 
 fn default_post_process_prompts() -> Vec<LLMPrompt> {
-    vec![LLMPrompt {
-        id: "default_improve_transcriptions".to_string(),
-        name: "Improve Transcriptions".to_string(),
-        prompt: "Clean this transcript:\n1. Fix spelling, capitalization, and punctuation errors\n2. Convert number words to digits (twenty-five → 25, ten percent → 10%, five dollars → $5)\n3. Replace spoken punctuation with symbols (period → ., comma → ,, question mark → ?)\n4. Remove filler words (um, uh, like as filler)\n5. Keep the language in the original version (if it was french, keep it in french for example)\n\nPreserve exact meaning and word order. Do not paraphrase or reorder content.\n\nReturn only the cleaned transcript.\n\nTranscript:\n${output}".to_string(),
-    }]
+    vec![
+        LLMPrompt {
+            id: "default_improve_transcriptions".to_string(),
+            name: "Improve Transcriptions".to_string(),
+            prompt: "Clean this transcript:\n1. Fix spelling, capitalization, and punctuation errors\n2. Convert number words to digits (twenty-five → 25, ten percent → 10%, five dollars → $5)\n3. Replace spoken punctuation with symbols (period → ., comma → ,, question mark → ?)\n4. Remove filler words (um, uh, like as filler)\n5. Keep the language in the original version (if it was french, keep it in french for example)\n\nPreserve exact meaning and word order. Do not paraphrase or reorder content.\n\nReturn only the cleaned transcript.\n\nTranscript:\n${output}".to_string(),
+        },
+        // handy-pro: empty prompt = send only the transcript, no system instruction. Use this with
+        // transcriber-style models (e.g. a Whisper/Qwen clean-up fine-tune) that are trained to
+        // tidy raw ASR text on their own and would otherwise echo any instruction back.
+        no_prompt_option(),
+    ]
+}
+
+/// The built-in "No prompt" choice: a selectable prompt whose empty text tells the
+/// post-processor to send the transcript to the model with no system message at all.
+fn no_prompt_option() -> LLMPrompt {
+    LLMPrompt {
+        id: "no_prompt".to_string(),
+        name: "No prompt (for transcriber models)".to_string(),
+        prompt: String::new(),
+    }
 }
 
 fn default_whisper_gpu_device() -> i32 {
@@ -936,6 +952,17 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                 changed = true;
             }
         }
+    }
+
+    // handy-pro: make sure the built-in "No prompt" option is present for users upgrading from a
+    // build that predates it, so transcriber models can be selected without echoing an instruction.
+    if !settings
+        .post_process_prompts
+        .iter()
+        .any(|p| p.id == "no_prompt")
+    {
+        settings.post_process_prompts.push(no_prompt_option());
+        changed = true;
     }
 
     changed
