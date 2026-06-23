@@ -73,7 +73,10 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
-      sign-binaries: true
+      # No code-signing certs/secrets are configured for this fork yet, so builds
+      # run unsigned (installers work; Windows SmartScreen shows a "Run anyway"
+      # prompt). Flip back to true and add the signing secrets once certs exist.
+      sign-binaries: false
       asset-prefix: "quill"
       upload-artifacts: false
       release-id: ${{ needs.create-release.outputs.release-id }}
