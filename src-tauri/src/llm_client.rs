@@ -275,5 +275,55 @@ pub async fn fetch_models(
         }
     }
 
-    Ok(models)
+    // The /v1/models endpoint lists *every* model the key can see — embeddings,
+    // TTS, Whisper, image, moderation, etc. — and there's no capability flag to
+    // filter by (confirmed against OpenAI's docs). Post-processing only needs
+    // chat-capable LLMs, so we drop ids that match well-known non-chat families.
+    //
+    // This is a denylist on purpose, not an allowlist: the "custom" provider
+    // points at arbitrary OpenAI-compatible endpoints (Ollama, LM Studio,
+    // OpenRouter, …) where chat models are named llama/qwen/mistral/etc., so an
+    // allowlist would wrongly hide them. We're careful NOT to deny substrings
+    // that appear in real chat models — e.g. "search" (gpt-4o-search-preview),
+    // "vision" (gpt-4-vision-preview) and "instruct" (…-instruct) stay allowed.
+    let kept = filter_chat_models(models);
+    Ok(kept)
+}
+
+/// Names of non-chat model families. Matched case-insensitively as substrings of
+/// the model id; if any marker is present the model is treated as non-chat.
+const NON_CHAT_MODEL_MARKERS: &[&str] = &[
+    "embed",          // text-embedding-3-*, nomic-embed-text, …
+    "tts",            // tts-1, gpt-4o-mini-tts
+    "text-to-speech", // alt naming
+    "speech",         // misc speech endpoints
+    "whisper",        // whisper-1
+    "transcribe",     // gpt-4o-transcribe, gpt-4o-mini-transcribe
+    "audio",          // gpt-4o-audio-preview (audio I/O, not text chat)
+    "realtime",       // gpt-4o-realtime-preview
+    "dall-e",         // dall-e-3
+    "dalle",          // alt naming
+    "image",          // gpt-image-1, grok-2-image-*
+    "moderation",     // omni-moderation-*, text-moderation-*
+    "rerank",         // reranking models on some gateways
+    "davinci",        // legacy base/completion models
+    "babbage",
+    "curie",
+    "video", // sora / veo-style video gen on custom gateways
+    "sora",
+    "veo",
+];
+
+/// Drop obvious non-chat models (embeddings, TTS, Whisper, image, …) from a raw
+/// `/v1/models` listing, preserving the original order of what remains.
+fn filter_chat_models(models: Vec<String>) -> Vec<String> {
+    models
+        .into_iter()
+        .filter(|id| {
+            let lower = id.to_lowercase();
+            !NON_CHAT_MODEL_MARKERS
+                .iter()
+                .any(|marker| lower.contains(*marker))
+        })
+        .collect()
 }

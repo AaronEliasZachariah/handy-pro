@@ -117,26 +117,43 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
   );
 
   const handleBaseUrlChange = useCallback(
-    (value: string) => {
+    async (value: string) => {
       if (!selectedProvider || selectedProvider.id !== "custom") {
         return;
       }
       const trimmed = value.trim();
       if (trimmed && trimmed !== baseUrl) {
-        void updatePostProcessBaseUrl(selectedProvider.id, trimmed);
+        await updatePostProcessBaseUrl(selectedProvider.id, trimmed);
+        // Custom endpoints authenticate via their base URL (key optional), so
+        // refresh the model list as soon as the URL is set.
+        void fetchPostProcessModels(selectedProvider.id);
       }
     },
-    [selectedProvider, baseUrl, updatePostProcessBaseUrl],
+    [selectedProvider, baseUrl, updatePostProcessBaseUrl, fetchPostProcessModels],
   );
 
   const handleApiKeyChange = useCallback(
-    (value: string) => {
+    async (value: string) => {
       const trimmed = value.trim();
-      if (trimmed !== apiKey) {
-        void updatePostProcessApiKey(selectedProviderId, trimmed);
+      if (trimmed === apiKey) return;
+      await updatePostProcessApiKey(selectedProviderId, trimmed);
+      // Auto-fetch models now that the key changed, so the model dropdown fills
+      // in immediately instead of forcing the user to switch providers and back
+      // (the previous behavior). Only when there's actually a key and the
+      // provider authenticates with one — Apple needs none, and custom providers
+      // key off their base URL (handled in handleBaseUrlChange).
+      if (trimmed && !isAppleProvider && selectedProvider?.id !== "custom") {
+        void fetchPostProcessModels(selectedProviderId);
       }
     },
-    [apiKey, selectedProviderId, updatePostProcessApiKey],
+    [
+      apiKey,
+      selectedProviderId,
+      updatePostProcessApiKey,
+      isAppleProvider,
+      selectedProvider,
+      fetchPostProcessModels,
+    ],
   );
 
   const handleModelChange = useCallback(
