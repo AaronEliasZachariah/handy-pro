@@ -351,8 +351,11 @@ jobs:
           AZURE_CLIENT_ID: ${{ inputs.sign-binaries && secrets.AZURE_CLIENT_ID || '' }}
           AZURE_CLIENT_SECRET: ${{ inputs.sign-binaries && secrets.AZURE_CLIENT_SECRET || '' }}
           AZURE_TENANT_ID: ${{ inputs.sign-binaries && secrets.AZURE_TENANT_ID || '' }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.sign-binaries && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.sign-binaries && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # Updater signing is independent of code-signing: even unsigned
+          # installers must carry a valid updater signature so the in-app
+          # auto-updater will accept them. Always pass the updater key.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Disable -march=native and all SIMD instruction sets above SSE4.2 for
           # x86_64 builds. Without this, CPUs lacking AVX/FMA (e.g. Celeron N2920,
           # FX-8350) crash with SIGILL. The Vulkan backend handles heavy compute
