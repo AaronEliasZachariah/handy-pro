@@ -65,7 +65,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3MzM2QTFFRDExMzVFQzAKUldUQVhoUFJIbW96SjZJNUpwKzVYVSs2eFRFcUlqZU1Qa1h0R2RKa0VEL3dKakZHS2dYYUlHR04K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhENkEyMDVEMTA5OUFGOEIKUldTTHI1a1FYU0JxamE0YmQrZG1HYWFFcU03WUlGaGZta2ExUkc5WmZqT0o5Vk43NUtXVS9SRk4K",
       "endpoints": [
         "https://github.com/AaronEliasZachariah/quill/releases/latest/download/latest.json"
       ]
