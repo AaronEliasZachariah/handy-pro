@@ -15,6 +15,8 @@ interface DropdownProps {
   placeholder?: string;
   disabled?: boolean;
   onRefresh?: () => void;
+  /** Minimum trigger width. Defaults to 200px; pass 0 for compact, inline use. */
+  minWidth?: number | string;
 }
 
 export const Dropdown: React.FC<DropdownProps> = ({
@@ -25,6 +27,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
   placeholder = "Select an option...",
   disabled = false,
   onRefresh,
+  minWidth = 200,
 }) => {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -62,7 +65,8 @@ export const Dropdown: React.FC<DropdownProps> = ({
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
         type="button"
-        className={`px-3 py-[7px] text-sm font-medium bg-surface border border-mid-gray/25 rounded-lg min-w-[200px] w-full text-start grid grid-cols-[1fr_auto] gap-2 items-center transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/30 ${
+        style={{ minWidth }}
+        className={`px-3 py-[7px] text-sm font-medium bg-surface border border-mid-gray/25 rounded-lg w-full text-start grid grid-cols-[1fr_auto] gap-2 items-center transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/30 ${
           disabled
             ? "opacity-50 cursor-not-allowed"
             : "hover:bg-logo-primary/10 cursor-pointer hover:border-logo-primary"

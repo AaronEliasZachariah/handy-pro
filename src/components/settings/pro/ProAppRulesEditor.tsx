@@ -4,10 +4,8 @@ import { Trash2 } from "lucide-react";
 import type { ProAppRule, ProMatchType } from "@/bindings";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
+import { Dropdown } from "../../ui/Dropdown";
 import { useSettings } from "../../../hooks/useSettings";
-
-const fieldClasses =
-  "px-2 py-1 text-sm font-medium bg-mid-gray/10 border border-mid-gray/25 rounded-lg text-start transition-all duration-150 hover:border-mid-gray/40 focus:outline-none focus:border-logo-primary focus:ring-2 focus:ring-logo-primary/20 disabled:opacity-60 disabled:cursor-not-allowed";
 
 /**
  * The ordered app -> profile rules table. First enabled rule whose process/title substring
@@ -59,23 +57,25 @@ export const ProAppRulesEditor: React.FC = () => {
                 }
                 aria-label={t("settings.postProcessing.pro.rules.toggleAria")}
               />
-              <select
-                className={`${fieldClasses} w-28 cursor-pointer`}
-                value={rule.match_type ?? "process"}
-                disabled={updating}
-                onChange={(e) =>
-                  patchRule(rule.id, {
-                    match_type: e.target.value as ProMatchType,
-                  })
+              <Dropdown
+                selectedValue={rule.match_type ?? "process"}
+                options={[
+                  {
+                    value: "process",
+                    label: t("settings.postProcessing.pro.rules.matchProcess"),
+                  },
+                  {
+                    value: "title",
+                    label: t("settings.postProcessing.pro.rules.matchTitle"),
+                  },
+                ]}
+                onSelect={(value) =>
+                  patchRule(rule.id, { match_type: value as ProMatchType })
                 }
-              >
-                <option value="process">
-                  {t("settings.postProcessing.pro.rules.matchProcess")}
-                </option>
-                <option value="title">
-                  {t("settings.postProcessing.pro.rules.matchTitle")}
-                </option>
-              </select>
+                disabled={updating}
+                minWidth={0}
+                className="w-32 shrink-0"
+              />
               <Input
                 variant="compact"
                 value={rule.pattern}
@@ -91,20 +91,19 @@ export const ProAppRulesEditor: React.FC = () => {
               <span className="text-mid-gray shrink-0" aria-hidden>
                 →
               </span>
-              <select
-                className={`${fieldClasses} w-36 cursor-pointer`}
-                value={rule.profile_key}
-                disabled={updating}
-                onChange={(e) =>
-                  patchRule(rule.id, { profile_key: e.target.value })
+              <Dropdown
+                selectedValue={rule.profile_key}
+                options={profiles.map((profile) => ({
+                  value: profile.key,
+                  label: profile.label,
+                }))}
+                onSelect={(value) =>
+                  patchRule(rule.id, { profile_key: value })
                 }
-              >
-                {profiles.map((profile) => (
-                  <option key={profile.key} value={profile.key}>
-                    {profile.label}
-                  </option>
-                ))}
-              </select>
+                disabled={updating}
+                minWidth={0}
+                className="w-44 shrink-0"
+              />
               <Button
                 variant="danger-ghost"
                 size="sm"
